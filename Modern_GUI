@@ -1,0 +1,338 @@
+import sqlite3
+import tkinter as tk
+import customtkinter as ctk
+from datetime import datetime
+from tkinter import messagebox
+
+
+DB_NAME = 'employee_data.db'
+c = sqlite3.connect(DB_NAME)
+cur = c.cursor()
+root = ctk.CTk()
+root.title("Employee Payroll")
+ctk.set_appearance_mode("Dark")
+
+
+def close_database():
+    c.close()
+    root.destroy()
+
+
+root.protocol('WM_DELETE_WINDOW', close_database)
+
+
+def create_tables():
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS employee (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_date TEXT NOT NULL,
+            to_date TEXT NOT NULL,
+            date_entered TEXT NOT NULL,
+            name TEXT NOT NULL,
+            hours_worked REAL NOT NULL,
+            hourly_rate REAL NOT NULL,
+            gross_pay REAL NOT NULL,
+            tax_rate REAL NOT NULL,
+            tax REAL NOT NULL,
+            net_pay REAL NOT NULL
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS totals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            total_hours REAL,
+            total_gross REAL,
+            total_net REAL,
+            total_employees INTEGER
+        )
+    """)
+    c.commit()
+    cur.execute("SELECT * FROM totals WHERE id = 1")
+    row = cur.fetchone()
+    if not row:
+        cur.execute("""
+            INSERT INTO totals (id, total_hours, total_gross, total_net, total_employees)
+            VALUES (1, 0, 0, 0, 0)
+        """)
+        c.commit()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS login (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('admin', 'supe', 'user'))
+        )
+    """)
+    c.commit()
+
+
+create_tables()
+
+
+def pay(hours_worked, hourly_rate, tax_rate):
+    overtime_rate = float(hourly_rate) * 1.5
+    if hours_worked > 40:
+        overtime_hours = hours_worked - 40
+        regular_pay = 40 * float(hourly_rate)
+        overtime_pay = overtime_hours * overtime_rate
+        gross_pay = regular_pay + overtime_pay
+    else:
+        gross_pay = hours_worked * float(hourly_rate)
+    tax = gross_pay * (tax_rate / 100)
+    net_pay = gross_pay - tax
+    return gross_pay, tax, net_pay
+
+
+def add(from_date, to_date, name, hours_worked, hourly_rate, tax_rate):
+    gross_pay, tax, net_pay = pay(hours_worked, hourly_rate, tax_rate)
+
+    with sqlite3.connect(DB_NAME) as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO employee (from_date, to_date, date_entered, name, hours_worked, hourly_rate, gross_pay, tax_rate, tax, net_pay)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (from_date, to_date, datetime.now(), name, hours_worked, hourly_rate, gross_pay, tax_rate, tax, net_pay))
+        cur.execute("SELECT SUM(hours_worked), SUM(gross_pay), SUM(net_pay), COUNT(*) FROM employee")
+        total_hours, total_gross, total_net, total_employees = cur.fetchone()
+        cur.execute("""
+            UPDATE totals
+            SET total_hours = ?,
+                total_gross = ?,
+                total_net = ?,
+                total_employees = ?
+            WHERE id = 1
+        """, (total_hours, total_gross, total_net, total_employees))
+        conn.commit()
+        c.close()
+
+
+welcome_frame = ctk.CTkFrame(root)
+welcome_frame.grid(row=0, column=0, sticky="nsew")
+view_frame = ctk.CTkFrame(root)
+add_frame = ctk.CTkFrame(root)
+view_frame.grid_forget()
+add_frame.grid_forget()
+
+
+def show_selected_page(selected_page):
+    if selected_page == "Add Employee Data":
+        show_add_frame()
+    elif selected_page == "View Employee Data":
+        show_view_frame()
+    elif selected_page == "Home":
+        show_welcome_frame()
+
+
+def show_totals(results_frame):
+
+    for widget in results_frame.winfo_children():
+        widget.destroy()
+
+    with sqlite3.connect(DB_NAME) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT total_hours, total_gross, total_net, total_employees FROM totals WHERE id = 1")
+        total_hours, total_gross, total_net, total_employees = cur.fetchone()
+        hours_label = ctk.CTkLabel(results_frame, text="Total Hours: ")
+        hours_label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        hours_value_label = ctk.CTkLabel(results_frame, text=total_hours)
+        hours_value_label.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        gross_label = ctk.CTkLabel(results_frame, text="Total Gross Pay: ")
+        gross_label.grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        gross_value_label = ctk.CTkLabel(results_frame, text=total_gross)
+        gross_value_label.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        net_label = ctk.CTkLabel(results_frame, text="Total Net Pay: ")
+        net_label.grid(row=2, column=0, sticky="w", padx=5, pady=5)
+        net_value_label = ctk.CTkLabel(results_frame, text=total_net)
+        net_value_label.grid(row=2, column=1, sticky="w", padx=5, pady=5)
+        employees_label = ctk.CTkLabel(results_frame, text="Total Employees: ")
+        employees_label.grid(row=3, column=0, sticky="w", padx=5, pady=5)
+        employees_value_label = ctk.CTkLabel(results_frame, text=total_employees)
+        employees_value_label.grid(row=3, column=1, sticky="w", padx=5, pady=5)
+
+
+def display_results(results_frame, results):
+    for widget in results_frame.winfo_children():
+        widget.destroy()
+
+    row_num = 0
+
+    for row in results:
+        date_label = ctk.CTkLabel(results_frame, text="Dates: ")
+        date_label.grid(row=row_num, column=0, sticky="w", padx=5, pady=5)
+        dates = f"{row[1]} to {row[2]}"
+        date_value_label = ctk.CTkLabel(results_frame, text=dates)
+        date_value_label.grid(row=row_num, column=1, sticky="w", padx=5, pady=5)
+        name_label = ctk.CTkLabel(results_frame, text="Employee Name: ")
+        name_label.grid(row=row_num + 1, column=0, sticky="w", padx=5, pady=5)
+        name = row[4]
+        name_value_label = ctk.CTkLabel(results_frame, text=name)
+        name_value_label.grid(row=row_num + 1, column=1, sticky="w", padx=5, pady=5)
+        hours_label = ctk.CTkLabel(results_frame, text="Hours Worked: ")
+        hours_label.grid(row=row_num + 2, column=0, sticky="w", padx=5, pady=5)
+        hours_worked = row[5]
+        hours_value_label = ctk.CTkLabel(results_frame, text=hours_worked)
+        hours_value_label.grid(row=row_num + 2, column=1, sticky="w", padx=5, pady=5)
+        hourly_label = ctk.CTkLabel(results_frame, text="Hourly Rate: ")
+        hourly_label.grid(row=row_num + 3, column=0, sticky="w", padx=5, pady=5)
+        hourly_rate = row[6]
+        hourly_value_label = ctk.CTkLabel(results_frame, text=hourly_rate)
+        hourly_value_label.grid(row=row_num + 3, column=1, sticky="w", padx=5, pady=5)
+        gross_label = ctk.CTkLabel(results_frame, text="Gross Pay: ")
+        gross_label.grid(row=row_num + 4, column=0, sticky="w", padx=5, pady=5)
+        gross_pay = row[7]
+        gross_value_label = ctk.CTkLabel(results_frame, text=gross_pay)
+        gross_value_label.grid(row=row_num + 4, column=1, sticky="w", padx=5, pady=5)
+        net_label = ctk.CTkLabel(results_frame, text="Net Pay: ")
+        net_label.grid(row=row_num + 5, column=0, sticky="w", padx=5, pady=5)
+        net_pay = row[10]
+        net_value_label = ctk.CTkLabel(results_frame, text=net_pay)
+        net_value_label.grid(row=row_num + 5, column=1, sticky="w", padx=5, pady=5)
+        row_num += 6
+    if not results:
+        ctk.CTkLabel(results_frame, text="No results found.").grid()
+
+
+def show_view_frame():
+    welcome_frame.grid_forget()
+    add_frame.grid_forget()
+    view_frame.grid(row=0, column=0, sticky="nsew")
+    search_frame = ctk.CTkFrame(view_frame)
+    search_frame.grid(row=1, column=0, columnspan=3, sticky="nsew")
+    search_fields_frame = ctk.CTkFrame(search_frame)
+    search_fields_frame.grid(row=2, column=0, columnspan=3, sticky="nsew")
+    results_frame = ctk.CTkScrollableFrame(search_frame)
+    results_frame.grid(row=6, column=0, columnspan=3, sticky="nsew", padx=10, pady=10)
+    search_frame.grid_columnconfigure(0, weight=1)
+    search_frame.grid_columnconfigure(1, weight=1)
+    search_frame.grid_columnconfigure(2, weight=1)
+    search_frame.grid_rowconfigure(0, weight=1)
+    search_frame.grid_rowconfigure(1, weight=1)
+    search_frame.grid_rowconfigure(2, weight=1)
+    ctk.CTkLabel(search_fields_frame, text="Search by Name:").grid(row=2, column=0)
+    search_name_entry = ctk.CTkEntry(search_fields_frame)
+    search_name_entry.grid(row=2, column=1)
+    ctk.CTkLabel(search_fields_frame, text="From Date:").grid(row=3, column=0)
+    from_date_entry = ctk.CTkEntry(search_fields_frame)
+    from_date_entry.grid(row=3, column=1)
+
+    def search(search_name=None, search_from_date=None, search_to_date=None):
+        query = "SELECT * FROM employee"
+        conditions = []
+        if search_name:
+            conditions.append(f"name LIKE '%{search_name}%'")
+        if search_from_date:
+            conditions.append(f"from_date >= '{search_from_date}'")
+        if search_to_date:
+            conditions.append(f"to_date <= '{search_to_date}'")
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        cur.execute(query)
+        results = cur.fetchall()
+        display_results(results_frame, results)
+    ctk.CTkLabel(search_fields_frame, text="To Date:").grid(row=4, column=0)
+    to_date_entry = ctk.CTkEntry(search_fields_frame)
+    to_date_entry.grid(row=4, column=1)
+    ctk.CTkButton(search_fields_frame, text="Search", command=search).grid(row=4, column=3)
+    ctk.CTkButton(search_fields_frame, text="Show All", command=search).grid(row=2, column=3)
+    ctk.CTkButton(view_frame, text="Home", command=show_welcome_frame).grid(row=0, column=0, sticky="nsew")
+    ctk.CTkButton(view_frame, text="Add", command=show_add_frame).grid(row=0, column=2, sticky="nsew")
+    ctk.CTkButton(search_fields_frame, text="Show Totals", command=lambda:show_totals(results_frame)).grid(row=3, column=3, sticky="w")
+
+
+def show_add_frame():
+    def on_submit():
+        from_date = from_date_entry.get()
+        to_date = to_date_entry.get()
+        name = fname_entry.get().capitalize() + " " + lname_entry.get().capitalize()
+        hours_worked = float(hours_worked_entry.get())
+        hourly_rate = float(hourly_rate_entry.get())
+        tax_rate = float(tax_rate_entry.get())
+        add(from_date, to_date, name, hours_worked, hourly_rate, tax_rate)
+        fname_entry.delete(0, tk.END)
+        lname_entry.delete(0, tk.END)
+    welcome_frame.grid_forget()
+    view_frame.grid_forget()
+    add_frame.grid(row=0, column=0, padx=10, pady=10)
+    from_date_label = ctk.CTkLabel(add_frame, text="Dates")
+    from_date_label.grid(row=1, column=0,columnspan=2, pady=5)
+    from_date_entry = ctk.CTkEntry(add_frame, placeholder_text="From Date")
+    from_date_entry.grid(row=2, column=0, pady=5)
+    to_date_entry = ctk.CTkEntry(add_frame, placeholder_text="To Date")
+    to_date_entry.grid(row=2, column=1, pady=5)
+    name_label = ctk.CTkLabel(add_frame, text="Employee Name")
+    name_label.grid(row=3, column=0, columnspan=2, pady=5)
+    fname_entry = ctk.CTkEntry(add_frame, placeholder_text="First Name")
+    fname_entry.grid(row=4, column=0, pady=5)
+    lname_entry = ctk.CTkEntry(add_frame, placeholder_text="Last Name")
+    lname_entry.grid(row=4, column=1, pady=5)
+    hours_worked_label = ctk.CTkLabel(add_frame, text="Hours Worked")
+    hours_worked_label.grid(row=5, column=0, columnspan=2, pady=5)
+    hours_worked_entry = ctk.CTkEntry(add_frame)
+    hours_worked_entry.grid(row=6, column=0, columnspan=2, pady=5)
+    hourly_rate_label = ctk.CTkLabel(add_frame, text="Hourly Rate")
+    hourly_rate_label.grid(row=7, column=0, columnspan=2, pady=5)
+    hourly_rate_entry = ctk.CTkEntry(add_frame)
+    hourly_rate_entry.grid(row=8, column=0, columnspan=2, pady=5)
+    tax_rate_label = ctk.CTkLabel(add_frame, text="Tax Rate")
+    tax_rate_label.grid(row=9, column=0, columnspan=2, pady=5)
+    tax_rate_entry = ctk.CTkEntry(add_frame)
+    tax_rate_entry.grid(row=10, column=0, columnspan=2, pady=5)
+    submit_button = ctk.CTkButton(add_frame, text="Submit", command=on_submit)
+    submit_button.grid(row=11, column=0, columnspan=2, pady=5)
+    home_button = ctk.CTkButton(add_frame, text="Home", command=show_welcome_frame)
+    home_button.grid(row=0, column=0, sticky="nw")
+    add_frame.grid(row=0, column=0, padx=10, pady=10)
+    view_button = ctk.CTkButton(add_frame, text="View", command=show_view_frame)
+    view_button.grid(row=0, column=1, sticky="ne")
+
+login_button = ctk.CTkButton(welcome_frame, text="Login", command=lambda: show_login_frame())
+login_button.grid(row=0, column=2, sticky="ne")
+
+
+def show_welcome_frame():
+    view_frame.grid_forget()
+    add_frame.grid_forget()
+    welcome_frame.grid(row=0, column=0, sticky="nsew")
+
+
+def show_login_frame():
+    login_frame = ctk.CTkFrame(welcome_frame)
+    login_frame.grid(row=1, column=0, sticky="nsew")
+    username_label = ctk.CTkLabel(login_frame, text="Username:")
+    username_label.grid(row=0, column=0, padx=5, pady=5)
+    username_entry = ctk.CTkEntry(login_frame)
+    username_entry.grid(row=0, column=1, padx=5, pady=5)
+    password_label = ctk.CTkLabel(login_frame, text="Password:")
+    password_label.grid(row=1, column=0, padx=5, pady=5)
+    password_entry = ctk.CTkEntry(login_frame, show="*")
+    password_entry.grid(row=1, column=1, padx=5, pady=5)
+
+    def login():
+        with sqlite3.connect(DB_NAME) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT role FROM login WHERE username = ? AND password = ?",
+                            (username_entry.get(), password_entry.get()))
+            result = cur.fetchone()
+            if result is None:
+                tk.messagebox.showerror("Login Failed", "Invalid username or password")
+            else:
+                role = result[0]
+                if role == "admin":
+                    view_button = ctk.CTkButton(welcome_frame, text="View Employee Data", command=show_view_frame)
+                    view_button.grid(row=0, column=0, sticky="nw")
+                    add_button = ctk.CTkButton(welcome_frame, text="Add Employee Data", command=show_add_frame)
+                    add_button.grid(row=0, column=1, stick="new")
+                login_frame.destroy()
+    login_button = ctk.CTkButton(login_frame, text="Login", command=login)
+    login_button.grid(row=2, column=1, padx=5, pady=5)
+    cancel_button = ctk.CTkButton(login_frame, text="Cancel", command=show_welcome_frame)
+    cancel_button.grid(row=2, column=0, padx=5, pady=5)
+    login_frame.columnconfigure(0, weight=1)
+    login_frame.columnconfigure(2, weight=1)
+    login_frame.rowconfigure(3, weight=1)
+    login_button_on_welcome_frame = welcome_frame.nametowidget(".!ctkframe.!ctkbutton")
+    login_button_on_welcome_frame.grid_forget()
+    username_entry.focus_set()
+
+
+root.mainloop()
